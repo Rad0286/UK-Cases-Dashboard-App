@@ -1,9 +1,11 @@
 """
 GCS Dashboard — Streamlit Edition
 ==================================
-Local:  streamlit run dashboard_streamlit.py
-Team:   streamlit run dashboard_streamlit.py --server.address 0.0.0.0
-Then open http://localhost:8501  (or http://<machine-ip>:8501 for the team)
+Works in two modes:
+  LIVE   — On the TR internal network: auto-fetches new files from FileBrowser
+  OFFLINE— On Streamlit Cloud (or no VPN): reads from the committed data.json
+
+To refresh data on Streamlit Cloud, run update_and_push.bat on your local machine.
 """
 
 import streamlit as st
@@ -55,11 +57,11 @@ st.markdown("""
 [data-testid="stMetricLabel"]  { font-size: 12px !important; }
 [data-testid="stMetricValue"]  { font-size: 26px !important; font-weight: 700 !important; }
 
-.status-ok  { color: #16a34a; font-weight: 600; }
-.status-err { color: #dc2626; font-weight: 600; }
+.status-ok      { color: #16a34a; font-weight: 600; }
+.status-offline { color: #ca8a04; font-weight: 600; }
+.status-err     { color: #dc2626; font-weight: 600; }
 
 div[data-testid="stTabs"] button[role="tab"] { font-weight: 600; font-size: 14px; }
-
 [data-testid="stSidebar"] { background: #f8f9fb; }
 </style>
 """, unsafe_allow_html=True)
@@ -73,7 +75,7 @@ def get_token():
         BASE_URL + "/api/login", data=payload,
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with urllib.request.urlopen(req, timeout=5) as r:
         return r.read().decode().strip()
 
 
@@ -91,7 +93,7 @@ def list_folder(token):
         BASE_URL + "/api/resources" + FOLDER_PATH,
         headers={"X-Auth": token},
     )
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with urllib.request.urlopen(req, timeout=10) as r:
         return json.loads(r.read().decode()).get("items", [])
 
 
@@ -126,16 +128,19 @@ def save_data(results, seen_pairs):
         json.dump({"results": results, "seen_pairs": list(seen_pairs)}, f, indent=2)
 
 
-# ── Folder Listing (cached 60 s) ──────────────────────────────────────────────
+# ── FileBrowser check (cached 60 s) ───────────────────────────────────────────
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_pairs():
-    """Returns (set_of_pair_basenames, token). Refreshes every 60 s."""
-    tok   = get_token()
-    items = list_folder(tok)
-    pdfs  = {i["name"][:-4] for i in items if i["name"].endswith(".pdf")}
-    xmls  = {i["name"][:-4] for i in items if i["name"].endswith(".xml")}
-    return pdfs & xmls, tok
+def try_fetch_pairs():
+    """Returns (pairs_set, token, None) on success, or (None, None, error_str) on failure."""
+    try:
+        tok   = get_token()
+        items = list_folder(tok)
+        pdfs  = {i["name"][:-4] for i in items if i["name"].endswith(".pdf")}
+        xmls  = {i["name"][:-4] for i in items if i["name"].endswith(".xml")}
+        return pdfs & xmls, tok, None
+    except Exception as e:
+        return None, None, str(e)
 
 
 # ── Process New Pairs ─────────────────────────────────────────────────────────
@@ -179,33 +184,36 @@ with st.sidebar:
     st.divider()
     st.markdown("## 🔍 Filters")
     min_pct = st.slider("Minimum Match %", 0, 100, 0, step=5)
-    sort_by = st.selectbox("Sort by", ["Processed At (newest)", "Match % (lowest)", "PDF Chars (largest)", "File name"])
+    sort_by = st.selectbox("Sort by", [
+        "Processed At (newest)", "Match % (lowest)",
+        "PDF Chars (largest)", "File name"
+    ])
 
     st.divider()
-    st.markdown("## 📡 Connection")
+    st.markdown("## 📡 Status")
     conn_slot = st.empty()
 
     st.divider()
+    st.caption("**Offline?** Run `update_and_push.bat` on your local machine to refresh data.")
     st.caption(f"Folder: `{FOLDER_PATH}`")
-    st.caption("Data saved to `data.json` — shared across restarts and team members if on a shared machine.")
 
 
-# ── Load & Sync ───────────────────────────────────────────────────────────────
+# ── Load saved data ───────────────────────────────────────────────────────────
 if refresh_btn:
     st.cache_data.clear()
 
 results, seen_pairs = load_saved()
 now_str  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-conn_ok  = False
+mode     = "offline"
 n_folder = 0
 
-try:
-    with st.spinner("Checking folder for new files…"):
-        all_pairs, token = fetch_pairs()
+# ── Try live connection ───────────────────────────────────────────────────────
+all_pairs, token, conn_error = try_fetch_pairs()
 
+if all_pairs is not None:
+    mode      = "live"
     n_folder  = len(all_pairs)
     new_pairs = all_pairs - seen_pairs
-    conn_ok   = True
 
     if new_pairs:
         results, seen_pairs = process_new(new_pairs, token, results, seen_pairs)
@@ -214,18 +222,19 @@ try:
         st.toast(f"✅ {len(new_pairs)} new file(s) processed!", icon="✅")
 
     conn_slot.markdown(
-        f'<span class="status-ok">● Connected</span><br>'
+        f'<span class="status-ok">● Live (TR network)</span><br>'
         f'<small>{n_folder} pair(s) in folder<br>Checked: {now_str}</small>',
         unsafe_allow_html=True,
     )
-
-except Exception as e:
+else:
     conn_slot.markdown(
-        f'<span class="status-err">● Unreachable</span><br><small>{e}</small>',
+        f'<span class="status-offline">● Offline mode</span><br>'
+        f'<small>Showing last saved data.<br>'
+        f'Run update_and_push.bat to refresh.</small>',
         unsafe_allow_html=True,
     )
     if not results:
-        st.warning(f"Cannot reach FileBrowser and no local cache found. ({e})")
+        st.info("No cached data yet. Run `update_and_push.bat` on your local machine first.")
 
 
 # ── Build DataFrame ───────────────────────────────────────────────────────────
@@ -244,7 +253,6 @@ if not df.empty:
         df = df.sort_values("pdf_chars", ascending=False)
     elif sort_by == "File name":
         df = df.sort_values("file")
-    # default: newest first (already ordered from insert)
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -252,6 +260,7 @@ total_pdf = int(df["pdf_chars"].sum()) if not df.empty else 0
 total_xml = int(df["xml_chars"].sum()) if not df.empty else 0
 overall   = round(total_xml / total_pdf * 100, 1) if total_pdf else 0
 
+mode_badge = "🟢 Live" if mode == "live" else "🟡 Offline"
 st.markdown(f"""
 <div class="gcs-header">
   <div>
@@ -259,23 +268,26 @@ st.markdown(f"""
     <p>foe-production.int.thomsonreuters.com &rsaquo; keying/GCS_completed</p>
   </div>
   <div class="ts">
-    {'🟢 Live' if conn_ok else '🔴 Offline'} &nbsp;|&nbsp; {n_folder} pair(s) in folder<br>
+    {mode_badge} &nbsp;|&nbsp; {n_folder if mode == "live" else "cached"} pair(s)<br>
     Last checked: <strong>{now_str}</strong><br>
     {'⏱ Auto-refreshing every 30 s' if auto_refresh else ''}
   </div>
 </div>
 """, unsafe_allow_html=True)
 
+if mode == "offline":
+    st.warning("📡 **Offline mode** — not on TR network. Showing last saved data. Run `update_and_push.bat` locally to push fresh results.", icon="📡")
+
 
 # ── Metric Cards ──────────────────────────────────────────────────────────────
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("📂 Files Processed",   f"{len(ok_results)}")
-c2.metric("📄 Total PDF Chars",   f"{total_pdf:,}")
-c3.metric("🗂️ Total XML Chars",   f"{total_xml:,}")
-c4.metric("📊 Overall Match",     f"{overall}%",
+c1.metric("📂 Files Processed",  f"{len(ok_results)}")
+c2.metric("📄 Total PDF Chars",  f"{total_pdf:,}")
+c3.metric("🗂️ Total XML Chars",  f"{total_xml:,}")
+c4.metric("📊 Overall Match",    f"{overall}%",
           delta=f"{overall - 100:.1f}%",
           delta_color="normal" if overall >= 95 else "inverse")
-c5.metric("⚠️ Errors",            f"{len(err_results)}")
+c5.metric("⚠️ Errors",           f"{len(err_results)}")
 
 st.divider()
 
@@ -284,12 +296,10 @@ st.divider()
 tab_table, tab_charts, tab_errors = st.tabs(["📋  Table", "📊  Charts", "⚠️  Errors"])
 
 
-# ────────────────────────────────────────────────────────────────────────────
-# TABLE TAB
-# ────────────────────────────────────────────────────────────────────────────
+# ── TABLE ─────────────────────────────────────────────────────────────────────
 with tab_table:
     if df.empty:
-        st.info("No files processed yet. Drop PDF/XML pairs into the folder and hit Refresh.")
+        st.info("No files processed yet.")
     else:
         def fmt_badge(pct):
             if pct >= 97:   return f"🟢 {pct}%"
@@ -297,55 +307,43 @@ with tab_table:
             else:           return f"🔴 {pct}%"
 
         display = df[["file","pdf_chars","xml_chars","diff","pct","timestamp"]].copy()
-        display.columns = ["File", "PDF Chars", "XML Chars", "Difference", "Match %", "Processed At"]
+        display.columns = ["File","PDF Chars","XML Chars","Difference","Match %","Processed At"]
         display["PDF Chars"]  = display["PDF Chars"].apply(lambda x: f"{x:,}")
         display["XML Chars"]  = display["XML Chars"].apply(lambda x: f"{x:,}")
         display["Difference"] = display["Difference"].apply(
             lambda x: f"+{x:,}" if x >= 0 else f"{x:,}"
         )
         display["Match %"] = display["Match %"].apply(fmt_badge)
-
         st.dataframe(display, use_container_width=True, hide_index=True, height=440)
 
-        st.markdown("**Export:**")
         dl1, dl2, _ = st.columns([1, 1, 5])
         with dl1:
-            csv = df.to_csv(index=False).encode("utf-8")
-            st.download_button("⬇️ CSV", csv, "gcs_charcount.csv", "text/csv",
-                               use_container_width=True)
+            st.download_button("⬇️ CSV", df.to_csv(index=False).encode(),
+                               "gcs_charcount.csv", "text/csv", use_container_width=True)
         with dl2:
             buf = io.BytesIO()
             df.to_excel(buf, index=False, engine="openpyxl")
-            st.download_button(
-                "⬇️ Excel", buf.getvalue(), "gcs_charcount.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
+            st.download_button("⬇️ Excel", buf.getvalue(), "gcs_charcount.xlsx",
+                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               use_container_width=True)
 
 
-# ────────────────────────────────────────────────────────────────────────────
-# CHARTS TAB
-# ────────────────────────────────────────────────────────────────────────────
+# ── CHARTS ────────────────────────────────────────────────────────────────────
 with tab_charts:
     if df.empty:
         st.info("No data to chart yet.")
     else:
-        labels = df["file"].str[-24:]   # trim long names
+        labels = df["file"].str[-24:]
 
-        # Chart 1 — Grouped bar: PDF vs XML
         fig1 = go.Figure()
-        fig1.add_trace(go.Bar(
-            name="PDF Chars", x=labels, y=df["pdf_chars"],
+        fig1.add_trace(go.Bar(name="PDF Chars", x=labels, y=df["pdf_chars"],
             marker_color="#0f3460",
             text=df["pdf_chars"].apply(lambda x: f"{x:,}"),
-            textposition="outside", textfont=dict(size=10),
-        ))
-        fig1.add_trace(go.Bar(
-            name="XML Chars", x=labels, y=df["xml_chars"],
+            textposition="outside", textfont=dict(size=10)))
+        fig1.add_trace(go.Bar(name="XML Chars", x=labels, y=df["xml_chars"],
             marker_color="#4ade80",
             text=df["xml_chars"].apply(lambda x: f"{x:,}"),
-            textposition="outside", textfont=dict(size=10),
-        ))
+            textposition="outside", textfont=dict(size=10)))
         fig1.update_layout(
             title=dict(text="PDF vs XML Character Count per File", font=dict(size=15)),
             barmode="group", height=430,
@@ -357,44 +355,29 @@ with tab_charts:
         )
         st.plotly_chart(fig1, use_container_width=True)
 
-        # Chart 2 — Match % bar with color coding
-        colors = [
-            "#16a34a" if p >= 97 else ("#ca8a04" if p >= 90 else "#dc2626")
-            for p in df["pct"]
-        ]
-        fig2 = go.Figure(go.Bar(
-            x=labels, y=df["pct"],
-            marker_color=colors,
+        colors = ["#16a34a" if p >= 97 else ("#ca8a04" if p >= 90 else "#dc2626")
+                  for p in df["pct"]]
+        fig2 = go.Figure(go.Bar(x=labels, y=df["pct"], marker_color=colors,
             text=df["pct"].apply(lambda p: f"{p}%"),
-            textposition="outside", textfont=dict(size=10),
-        ))
+            textposition="outside", textfont=dict(size=10)))
         fig2.add_hline(y=97, line_dash="dot", line_color="#16a34a",
-                       annotation_text="97% (target)", annotation_position="bottom right")
+                       annotation_text="97% target", annotation_position="bottom right")
         fig2.add_hline(y=90, line_dash="dot", line_color="#ca8a04",
-                       annotation_text="90% (warning)", annotation_position="bottom right")
+                       annotation_text="90% warning", annotation_position="bottom right")
         fig2.update_layout(
             title=dict(text="XML / PDF Match % per File", font=dict(size=15)),
             height=400, plot_bgcolor="white", paper_bgcolor="white",
-            xaxis_title="File", yaxis_title="Match %",
-            yaxis_range=[0, 115],
-            xaxis_tickangle=-25,
-            margin=dict(t=70, b=60, l=60, r=20),
+            xaxis_title="File", yaxis_title="Match %", yaxis_range=[0, 115],
+            xaxis_tickangle=-25, margin=dict(t=70, b=60, l=60, r=20),
         )
         st.plotly_chart(fig2, use_container_width=True)
 
-        # Chart 3 — Scatter: file size vs match %
         fig3 = go.Figure(go.Scatter(
-            x=df["pdf_chars"], y=df["pct"],
-            mode="markers+text",
-            text=labels,
-            textposition="top center",
-            textfont=dict(size=9),
-            marker=dict(
-                size=12, color=df["pct"],
+            x=df["pdf_chars"], y=df["pct"], mode="markers+text",
+            text=labels, textposition="top center", textfont=dict(size=9),
+            marker=dict(size=12, color=df["pct"],
                 colorscale=[[0,"#dc2626"],[0.5,"#ca8a04"],[1,"#16a34a"]],
-                showscale=True,
-                colorbar=dict(title="Match %"),
-            ),
+                showscale=True, colorbar=dict(title="Match %")),
         ))
         fig3.update_layout(
             title=dict(text="Document Size vs Match %", font=dict(size=15)),
@@ -405,18 +388,16 @@ with tab_charts:
         st.plotly_chart(fig3, use_container_width=True)
 
 
-# ────────────────────────────────────────────────────────────────────────────
-# ERRORS TAB
-# ────────────────────────────────────────────────────────────────────────────
+# ── ERRORS ────────────────────────────────────────────────────────────────────
 with tab_errors:
     if not err_results:
         st.success("✅ No errors — all files processed successfully.")
     else:
         for r in err_results:
-            st.error(f"**{r['file']}** &nbsp;—&nbsp; {r['error']}  \n*Attempted: {r['timestamp']}*")
-        if st.button("🗑️ Clear error records"):
+            st.error(f"**{r['file']}** — {r['error']}  \n*Attempted: {r['timestamp']}*")
+        if st.button("🗑️ Clear error records and allow retry"):
             results = [r for r in results if not r.get("error")]
-            seen_pairs -= {r["file"] for r in err_results}  # allow retry
+            seen_pairs -= {r["file"] for r in err_results}
             save_data(results, seen_pairs)
             st.cache_data.clear()
             st.rerun()
