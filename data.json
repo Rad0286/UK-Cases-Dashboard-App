@@ -1,0 +1,106 @@
+{
+  "results": [
+    {
+      "file": "DO0000363281",
+      "pdf_chars": 1516,
+      "xml_chars": 1425,
+      "diff": -91,
+      "pct": 94.0,
+      "timestamp": "2026-09-11 15:21:57",
+      "error": null
+    },
+    {
+      "file": "DO0000363264",
+      "pdf_chars": 28558,
+      "xml_chars": 26980,
+      "diff": -1578,
+      "pct": 94.5,
+      "timestamp": "2026-09-11 15:21:56",
+      "error": null
+    },
+    {
+      "file": "DO0000363261",
+      "pdf_chars": 19634,
+      "xml_chars": 19310,
+      "diff": -324,
+      "pct": 98.3,
+      "timestamp": "2026-09-11 15:21:54",
+      "error": null
+    },
+    {
+      "file": "DO0000363260",
+      "pdf_chars": 32275,
+      "xml_chars": 31339,
+      "diff": -936,
+      "pct": 97.1,
+      "timestamp": "2026-09-11 15:21:53",
+      "error": null
+    },
+    {
+      "file": "DO0000363257",
+      "pdf_chars": 119623,
+      "xml_chars": 111861,
+      "diff": -7762,
+      "pct": 93.5,
+      "timestamp": "2026-09-11 15:21:51",
+      "error": null
+    },
+    {
+      "file": "DO0000363253",
+      "pdf_chars": 69893,
+      "xml_chars": 68820,
+      "diff": -1073,
+      "pct": 98.5,
+      "timestamp": "2026-09-11 15:21:49",
+      "error": null
+    },
+    {
+      "file": "DO0000363252",
+      "pdf_chars": 59095,
+      "xml_chars": 58083,
+      "diff": -1012,
+      "pct": 98.3,
+      "timestamp": "2026-09-11 15:21:47",
+      "error": null
+    },
+    {
+      "file": "DO0000363247_exported",
+      "pdf_chars": 18139,
+      "xml_chars": 17500,
+      "diff": -639,
+      "pct": 96.5,
+      "timestamp": "2026-09-11 15:21:45",
+      "error": null
+    },
+    {
+      "file": "DO0000363243",
+      "pdf_chars": 80169,
+      "xml_chars": 72255,
+      "diff": -7914,
+      "pct": 90.1,
+      "timestamp": "2026-09-11 15:21:44",
+      "error": null
+    },
+    {
+      "file": "DO0000363239",
+      "pdf_chars": 40836,
+      "xml_chars": 38215,
+      "diff": -2621,
+      "pct": 93.6,
+      "timestamp": "2026-09-11 15:21:41",
+      "error": null
+    }
+  ],
+  "seen_pairs": [
+    "DO0000363260",
+    "DO0000363243",
+    "DO0000363239",
+    "DO0000363281",
+    "DO0000363252",
+    "DO0000363261",
+    "DO0000363264",
+    "DO0000363247_exported",
+    "DO0000363257",
+    "DO0000363253"
+  ]
+}
